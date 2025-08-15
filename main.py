@@ -1,96 +1,75 @@
-import json
-import chromadb
-from sentence_transformers import SentenceTransformer
-from tqdm import tqdm
 import os
+import pickle
+import time
+from retriever.embedder import get_model, load_documents, encode_documents, encode_query
+from retriever.vector_store import create_qdrant_collection, add_documents_to_index, query_index
+from generator.prompt_template import build_prompt
+from generator.llm_interface import call_llm
 
 
-# Constants
-MODEL_NAME = "all-MiniLM-L6-v2"
-JSONL_PATH = "data/fitness.jsonl"
-COLLECTION_NAME = "documents"
-CHROMA_DB_PATH = "./chroma_db"
-HASH_FILE = "data/.fitness_hash"
+def initialize_or_build_index(jsonl_path, encoder_model, embedding_dim=384):
+    """
+    Loads or builds Qdrant index.
+    """
+    # Load docs from JSONL
+    documents = load_documents(jsonl_path)
+    print(f"Loaded {len(documents)} chunks.")
 
+    # Create embeddings
+    doc_embeddings = encode_documents(documents, encoder_model)
 
-def data_has_changed(jsonl_path, hash_path):
-    # Use file's last modified time and size
-    stat = os.stat(jsonl_path)
-    meta_str = f"{stat.st_mtime_ns}-{stat.st_size}"
-    
-    if os.path.exists(hash_path):
-        with open(hash_path, "r") as f:
-            old_meta = f.read().strip()
-        if old_meta == meta_str:
-            return False
+    # Create Qdrant collection
+    create_qdrant_collection(doc_embeddings.shape[1])
 
-    with open(hash_path, "w") as f:
-        f.write(meta_str)
-    return True
+    # Insert docs
+    add_documents_to_index(documents, doc_embeddings)
+    print("Qdrant index ready.")
 
-
-
-def load_model():
-    return SentenceTransformer(MODEL_NAME)
-
-def load_documents(path, limit=20):
-    docs = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in tqdm(f, total=limit):
-            item = json.loads(line)
-            combined = f"{item['title_en']}. {item['content_en']}"
-            docs.append(combined)
-    return docs
-
-
-def generate_embeddings(model, documents):
-    print("Generating embeddings...")
-    return model.encode(documents, show_progress_bar=True)
-
-
-def init_chroma_collection(path, name):
-    client = chromadb.PersistentClient(path=path)
-    return client.get_or_create_collection(name=name, metadata={"hnsw:space": "cosine"})
-
-
-def add_documents_to_collection(collection, docs, embeddings):
-    print("Adding to ChromaDB...")
-    collection.add(
-        documents=docs,
-        embeddings=embeddings,
-        ids=[f"doc_{i}" for i in range(len(docs))]
-    )
-
-
-def interactive_query_loop(model, collection):
-    query = "Tell me about energy"
-    while query and query.lower() != "exit":
-        query_embedding = model.encode([query])[0]
-        print("\nPerforming search...")
-        results = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=2
-        )
-        for id, doc, dist in zip(results["ids"][0], results[ "documents"][0], results["distances"][0]):
-            print(f"Doc: {id} > {doc} (score: {dist:.4f})\n")
-        print( "-" * 40)
-        query = input("\nEnter your query (or 'exit'): ")
-
+    return documents
 
 def main():
-    model = load_model()
-    collection = init_chroma_collection(CHROMA_DB_PATH, COLLECTION_NAME)
+    load_start = time.time()
+    jsonl_path = r"data/fitness.jsonl"
+    encoder_model_name = 'all-MiniLM-L6-v2'
+    encoder_model = get_model(encoder_model_name)
+    chat_history = [] 
 
-    if data_has_changed(JSONL_PATH, HASH_FILE):
-        print("Data has changed")
-        docs = load_documents(JSONL_PATH)
-        embeddings = generate_embeddings(model, docs)
-        add_documents_to_collection(collection, docs, embeddings)
-    else:
-        print("No changes in data.")
+    documents = initialize_or_build_index(jsonl_path, encoder_model)
 
-    interactive_query_loop(model, collection)
+    print(f"Index and documents loaded in {time.time() - load_start:.2f} seconds.")
+    while True:
+        query = input("\nEnter your query (or 'exit' to quit): ").strip()
+        start = time.time()
 
+        if query.lower() == 'exit':
+            break
+        
+        query_embedding = encode_query(query, encoder_model)
+        results = query_index(query_embedding, top_k=3)
+
+        if not results:
+            print("No results found.")
+            continue
+
+        chunk_time = time.time()
+        print("\nChunks retrieved in {:.2f} seconds:".format(chunk_time - start))
+
+        gen_start = time.time()
+        context = [res['document'] for res in results]
+        prompt = build_prompt(context, query)
+        answer, chat_history = call_llm(
+            prompt,
+            model_name="mistral:latest",
+            history=chat_history,
+            history_enabled=True,
+        )
+
+        print("\nAnswer:")
+        print(answer)
+        print("=" * 50)
+        end = time.time()
+        print(f"LLM response time: {end - gen_start:.2f} seconds.")
 
 if __name__ == "__main__":
     main()
+    
