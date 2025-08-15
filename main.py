@@ -1,42 +1,47 @@
 import os
 import pickle
 import time
-from retriever.embedder import get_model, load_documents, encode_documents, encode_query
-from retriever.vector_store import create_qdrant_collection, add_documents_to_index, query_index
+from retriever.embedder import load_documents, Embedder
+from retriever.vector_store import collection_exists, create_qdrant_collection, add_documents_to_index, query_index
 from generator.prompt_template import build_prompt
-from generator.llm_interface import call_llm
-
-
-def initialize_or_build_index(jsonl_path, encoder_model, embedding_dim=384):
-    """
-    Loads or builds Qdrant index.
-    """
-    # Load docs from JSONL
-    documents = load_documents(jsonl_path)
-    print(f"Loaded {len(documents)} chunks.")
-
-    # Create embeddings
-    doc_embeddings = encode_documents(documents, encoder_model)
-
-    # Create Qdrant collection
-    create_qdrant_collection(doc_embeddings.shape[1])
-
-    # Insert docs
-    add_documents_to_index(documents, doc_embeddings)
-    print("Qdrant index ready.")
-
-    return documents
+from generator.llm_interface import LLMInterface
 
 def main():
-    load_start = time.time()
+    start_time = time.time()
+
     jsonl_path = r"data/fitness.jsonl"
     encoder_model_name = 'all-MiniLM-L6-v2'
-    encoder_model = get_model(encoder_model_name)
-    chat_history = [] 
 
-    documents = initialize_or_build_index(jsonl_path, encoder_model)
+    # Load documents
+    load_start = time.time()
+    documents = load_documents(jsonl_path)
+    load_end = time.time()
+    print(f"Documents loaded in {load_end - load_start:.2f} seconds\nDocuments found: {len(documents)}")
 
-    print(f"Index and documents loaded in {time.time() - load_start:.2f} seconds.")
+    # Initialize LLM and Embedder
+    init_start = time.time()
+    llm = LLMInterface(history=True)
+    llm_end = time.time()
+    print(f"LLM initialized in {llm_end - init_start:.2f} seconds")
+    embedder = Embedder(model_name=encoder_model_name)
+    emb_end = time.time()
+    print(f"Embedder initialized in {emb_end - llm_end:.2f} seconds")
+
+    # Check for collection and possibly create & index
+    index_start = time.time()
+    if not collection_exists():
+        print("Creating Qdrant collection and indexing documents...")
+        doc_embeddings = embedder.encode_documents(documents)
+        create_qdrant_collection(doc_embeddings.shape[1])
+        add_documents_to_index(documents, doc_embeddings)
+    else:
+        print("Qdrant collection already exists, skipping indexing.")
+    index_end = time.time()
+    print(f"Indexing step completed in {index_end - index_start:.2f} seconds")
+
+    total_end = time.time()
+    print(f"Total setup time: {total_end - start_time:.2f} seconds")
+
     while True:
         query = input("\nEnter your query (or 'exit' to quit): ").strip()
         start = time.time()
@@ -44,7 +49,7 @@ def main():
         if query.lower() == 'exit':
             break
         
-        query_embedding = encode_query(query, encoder_model)
+        query_embedding = embedder.encode_query(query)
         results = query_index(query_embedding, top_k=3)
 
         if not results:
@@ -52,23 +57,15 @@ def main():
             continue
 
         chunk_time = time.time()
-        print("\nChunks retrieved in {:.2f} seconds:".format(chunk_time - start))
 
-        gen_start = time.time()
         context = [res['document'] for res in results]
         prompt = build_prompt(context, query)
-        answer, chat_history = call_llm(
-            prompt,
-            model_name="mistral:latest",
-            history=chat_history,
-            history_enabled=True,
-        )
 
         print("\nAnswer:")
-        print(answer)
+        print(llm.call_llm(prompt))
         print("=" * 50)
         end = time.time()
-        print(f"LLM response time: {end - gen_start:.2f} seconds.")
+        print(f"Response time: {chunk_time - start:.2f}s + {end - chunk_time:.2f}s.")
 
 if __name__ == "__main__":
     main()

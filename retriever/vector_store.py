@@ -10,6 +10,9 @@ client = QdrantClient(host="localhost", port=6333)
 
 COLLECTION_NAME = "documents"
 
+def collection_exists(client: QdrantClient = client, collection_name: str = COLLECTION_NAME) -> bool:
+    return collection_name in [c.name for c in client.get_collections().collections]
+
 def create_qdrant_collection(dim):
     """
     Creates or recreates a Qdrant collection for storing embeddings.
@@ -29,7 +32,7 @@ def add_documents_to_index(documents, embeddings):
     ]
     client.upsert(collection_name=COLLECTION_NAME, points=points)
 
-def query_index(query_embedding, top_k=5):
+def query_index(query_embedding, top_k=3):
     """
     Queries Qdrant and returns top_k most similar documents.
     """
@@ -42,15 +45,3 @@ def query_index(query_embedding, top_k=5):
         {"score": r.score, "document": r.payload["document"]}
         for r in search_result
     ]
-
-def save_index(index_path, metadata_path):
-    """
-    Not needed for Qdrant (persistent storage).
-    """
-    pass
-
-def load_index(index_path, metadata_path):
-    """
-    Not needed for Qdrant (persistent storage).
-    """
-    pass

@@ -67,49 +67,20 @@ def load_documents(jsonl_path, long_chunk_size=300, short_chunk_size=550, overla
     return all_documents
 
 
-def get_model(model_name='all-MiniLM-L6-v2') -> SentenceTransformer:
-    """
-    Load and return the SentenceTransformer model.
-    """
-    return SentenceTransformer(model_name)
+class Embedder:
+    def __init__(self, model_name='all-MiniLM-L6-v2'):
+        self.model = SentenceTransformer(model_name)
 
-def encode_documents(docs, model, batch_size=32):
-    """
-    Encodes a list of document dicts into embeddings.
-    Each dict must have a 'text' key.
-    """
-    # model = SentenceTransformer(model)
-    texts = [doc['text'] for doc in docs]
-    embeddings = model.encode(
-        texts,
-        batch_size=batch_size,
-        show_progress_bar=True,
-        normalize_embeddings=True
-    )
-    return np.array(embeddings)
-
-def encode_query(query, model ):
-    """
-    Encodes a single query string.
-    """
-    # model = SentenceTransformer(model)
-    return model.encode([query], normalize_embeddings=True)[0]
-
-
-# class Embedder:
-#     def __init__(self, model_name='all-MiniLM-L6-v2'):
-#         self.model = SentenceTransformer(model_name)
-
-#     def encode_documents(self, docs, batch_size=32):
-#         """
-#         Encodes a list of document strings into embeddings.
-#         """
-#         texts = [doc['text'] for doc in docs]
-#         embeddings = self.model.encode(texts, batch_size=batch_size, show_progress_bar=True, normalize_embeddings=True)
-#         return np.array(embeddings)
+    def encode_documents(self, docs, batch_size=32):
+        """
+        Encodes a list of document strings into embeddings.
+        """
+        texts = [doc['text'] for doc in docs]
+        embeddings = self.model.encode(texts, batch_size=batch_size, show_progress_bar=True, normalize_embeddings=True)
+        return np.array(embeddings)
     
-#     def encode_query(self, query):
-#         """
-#         Encodes a single query string.
-#         """
-#         return self.model.encode([query], normalize_embeddings=True)[0]
+    def encode_query(self, query):
+        """
+        Encodes a single query string.
+        """
+        return self.model.encode([query], normalize_embeddings=True)[0]
