@@ -32,7 +32,7 @@ def add_documents_to_index(documents, embeddings):
     ]
     client.upsert(collection_name=COLLECTION_NAME, points=points)
 
-def query_index(query_embedding, top_k=3):
+def query_index(query_embedding, top_k=3, threshold=0.1):
     """
     Queries Qdrant and returns top_k most similar documents.
     """
@@ -41,7 +41,15 @@ def query_index(query_embedding, top_k=3):
         query_vector=query_embedding.tolist(),
         limit=top_k
     )
-    return [
+    filtered = [
         {"score": r.score, "document": r.payload["document"]}
         for r in search_result
+        if r.score >= threshold
     ]
+    print(filtered)
+    return filtered  if filtered else [{"score": threshold, 
+                                       "document": {"title": "NA",
+                                                    "chunk_id": 0,
+                                                    "text": "No relevant documents found."}
+                                                    }]
+
