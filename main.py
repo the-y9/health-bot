@@ -1,72 +1,104 @@
-import os
-import pickle
+from fastapi import FastAPI, Request
+from pydantic import BaseModel
+from typing import List
 import time
-from retriever.embedder import load_documents, Embedder
+
+from retriever.sql_emb import load_documents, Embedder
 from retriever.vector_store import collection_exists, create_qdrant_collection, add_documents_to_index, query_index
 from generator.prompt_template import build_prompt
 from generator.llm_interface import LLMInterface
+from docker import docker_image_exists, pull_docker_image, run_docker_container
 
-def main():
-    start_time = time.time()
+# ==== Config ====
+# FILE_PATH = "data/fitness.jsonl"
+FILE_PATH = "database.db"
+ENCODER_MODEL = "all-MiniLM-L6-v2"
+TOP_K = 3
+image = "qdrant/qdrant"
+container_name = "health-bot-qdrant"
+storage_path = "qdrant_storage"
 
-    jsonl_path = r"data/fitness.jsonl"
-    encoder_model_name = 'all-MiniLM-L6-v2'
+# ==== FastAPI App ====
+app = FastAPI()
 
-    # Load documents
-    load_start = time.time()
-    documents = load_documents(jsonl_path)
-    load_end = time.time()
-    print(f"Documents loaded in {load_end - load_start:.2f} seconds\nDocuments found: {len(documents)}")
+# ==== Models ====
+class QueryRequest(BaseModel):
+    query: str
+    user_id: str 
 
-    # Initialize LLM and Embedder
-    init_start = time.time()
-    llm = LLMInterface(history=True)
-    llm_end = time.time()
-    print(f"LLM initialized in {llm_end - init_start:.2f} seconds")
-    embedder = Embedder(model_name=encoder_model_name)
-    emb_end = time.time()
-    print(f"Embedder initialized in {emb_end - llm_end:.2f} seconds")
+class QueryResponse(BaseModel):
+    answer: str
+    results: List[dict]
+    timing: dict
 
-    # Check for collection and possibly create & index
-    index_start = time.time()
+# ==== Globals (set during startup) ====
+llm = None
+embedder = None
+documents = None
+llm_sessions = {} 
+
+# ==== Startup Event ====
+@app.on_event("startup")
+def setup():
+    global llm, embedder, documents, llm_sessions
+
+    if not docker_image_exists(image):
+        pull_docker_image(image)
+    run_docker_container(image, container_name, storage_path)
+
+    print("Loading documents...")
+    documents = load_documents(FILE_PATH)
+    print(f"Loaded {len(documents)} documents")
+
+    print("Initializing Embedder and LLM...")
+    embedder = Embedder(model_name=ENCODER_MODEL)
+
     if not collection_exists():
-        print("Creating Qdrant collection and indexing documents...")
+        print("Creating and indexing Qdrant collection...")
         doc_embeddings = embedder.encode_documents(documents)
         create_qdrant_collection(doc_embeddings.shape[1])
         add_documents_to_index(documents, doc_embeddings)
+        print("Indexing complete.")
     else:
         print("Qdrant collection already exists, skipping indexing.")
-    index_end = time.time()
-    print(f"Indexing step completed in {index_end - index_start:.2f} seconds")
 
-    total_end = time.time()
-    print(f"Total setup time: {total_end - start_time:.2f} seconds")
+@app.get("/")
+def read_root():
+    return {"message": "Health Bot API is running. Use /query to post questions."}
 
-    while True:
-        query = input("\nEnter your query (or 'exit' to quit): ").strip()
-        start = time.time()
+# ==== Query Endpoint ====
+@app.post("/query", response_model=QueryResponse)
+def ask_question(req: QueryRequest):
+    start = time.time()
 
-        if query.lower() == 'exit':
-            break
-        
-        query_embedding = embedder.encode_query(query)
-        results = query_index(query_embedding, top_k=3)
+    # Get or create LLMInterface for this user
+    if req.user_id not in llm_sessions:
+        llm_sessions[req.user_id] = LLMInterface(history_enabled=True)
+    user_llm = llm_sessions[req.user_id]
 
-        if not results:
-            print("No results found.")
-            continue
+    # Encode query and retrieve context
+    query_embedding = embedder.encode_query(req.query)
+    results = query_index(query_embedding, top_k=TOP_K)
+    chunk_time = time.time()
 
-        chunk_time = time.time()
+    if not results:
+        return QueryResponse(
+            answer="No relevant documents found.",
+            results=[],
+            timing={"embedding_time": chunk_time - start, "generation_time": 0}
+        )
 
-        context = [res['document'] for res in results]
-        prompt = build_prompt(context, query)
+    context = [res["document"] for res in results]
+    prompt = build_prompt(context, req.query)
+    answer = user_llm.call_llm(prompt)
+    end = time.time()
 
-        print("\nAnswer:")
-        print(llm.call_llm(prompt))
-        print("=" * 50)
-        end = time.time()
-        print(f"Response time: {chunk_time - start:.2f}s + {end - chunk_time:.2f}s.")
+    return QueryResponse(
+        answer=answer,
+        results=results,
+        timing={
+            "embedding_time": chunk_time - start,
+            "generation_time": end - chunk_time
+        }
+    )
 
-if __name__ == "__main__":
-    main()
-    

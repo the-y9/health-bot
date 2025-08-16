@@ -24,7 +24,9 @@ def load_documents(jsonl_path, long_chunk_size=300, short_chunk_size=550, overla
     def process_file(file_path):
         file_documents = []
         with open(file_path, 'r', encoding='utf-8') as f:
-            for line in f:
+            for ide, line in enumerate(f):
+                # print(ide)
+                ide+=1
                 record = json.loads(line)
                 title = record.get('title_en', '')
                 paragraphs = record.get('content_en', '')
@@ -37,7 +39,7 @@ def load_documents(jsonl_path, long_chunk_size=300, short_chunk_size=550, overla
                     # Keep short articles as a single chunk
                     file_documents.append({
                         'title': title,
-                        'chunk_id': 0,
+                        'chunk_id': ide,
                         'text': full_text
                     })
                 else:
@@ -46,7 +48,7 @@ def load_documents(jsonl_path, long_chunk_size=300, short_chunk_size=550, overla
                     for idx, chunk in enumerate(chunks):
                         file_documents.append({
                             'title': title,
-                            'chunk_id': idx,
+                            'chunk_id': f"{ide}.{idx:02d}",
                             'text': chunk
                         })
         return file_documents

@@ -1,3 +1,5 @@
+# init_db.py
+
 import sqlite3
 
 def init_db():
@@ -19,7 +21,8 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
         content TEXT,
-        published_date TEXT,
+        published_date TEXT DEFAULT (DATE('now')),
+        word_count INTEGER,
         source_id INTEGER,
         FOREIGN KEY (source_id) REFERENCES source(id)
     )
@@ -72,9 +75,15 @@ def init_db():
          "2025-08-10", 1)
     ]
 
+    articles_data_with_wc = []
+    for title, content, published_date, source_id in articles_data:
+        word_count = len(content.split()) if content else 0
+        articles_data_with_wc.append((title, content, published_date, word_count, source_id))
+
+
     cursor.executemany(
-        "INSERT INTO articles (title, content, published_date, source_id) VALUES (?, ?, ?, ?)",
-        articles_data
+        "INSERT INTO articles (title, content, published_date, word_count, source_id) VALUES (?, ?, ?, ?, ?)",
+        articles_data_with_wc
     )
 
     conn.commit()
