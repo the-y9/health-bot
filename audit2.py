@@ -5,15 +5,17 @@ from collections import defaultdict
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 from nltk.tokenize import word_tokenize, sent_tokenize
 from rouge_score import rouge_scorer
-from retriever.embedder import load_documents
+from retriever.sql_emb import load_documents
 import nltk
-
-nltk.download("punkt", quiet=True)
+import sqlite3
 from tqdm import tqdm
+
+
+# nltk.download("punkt")
 
 # === CONFIG ===
 jsonl_path = r"data\fitness.jsonl"
-expected_overlap = 50
+expected_overlap = 5
 min_chunk_words = 300
 max_chunk_words = 500
 
@@ -133,13 +135,24 @@ def load_full_articles(jsonl_path):
                     articles[title] = full_text
     return articles
 
-# === Chunk Quality Audit ===
-from collections import defaultdict
-from nltk.tokenize import word_tokenize, sent_tokenize
-from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
-from rouge_score import rouge_scorer
-from tqdm import tqdm
-import numpy as np
+
+def load_sql_articles(db_path):
+    articles = {}
+    
+    # Connect to SQLite database
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT title, content FROM articles")
+    
+    for title, content in cursor.fetchall():
+        content_text = str(content)
+        full_text = f"{title}\n{content_text}".strip()
+        if full_text:
+            articles[title] = full_text
+    
+    conn.close()
+    return articles
+
 
 def audit_chunks(chunks, originals, min_chunk_words=30, max_chunk_words=300, expected_overlap=10):
     rouge = rouge_scorer.RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
@@ -231,11 +244,11 @@ def audit_chunks(chunks, originals, min_chunk_words=30, max_chunk_words=300, exp
 # === MAIN ===
 if __name__ == "__main__":
     print("Audit started...")
-
-    originals = load_full_articles(jsonl_path)
+    db = "database.db"
+    originals = load_sql_articles(db)
     print(len(originals), "docs")
 
-    chunks = load_documents(jsonl_path)
+    chunks = load_documents(db)
     print(len(chunks), "chunks")
 
     issues, summary = audit_chunks(chunks, originals)
@@ -256,8 +269,8 @@ if __name__ == "__main__":
     # print("\nSimilarity Score Summary (All Documents)")
     # for key, val in summary.items():
     #     print(f"- {key}: {val}")
-    with open("audit.py",'w') as f:
-        f.write("Similarity Score Summary (All Documents)")
+    with open("audit.md",'w') as f:
+        f.write("## Similarity Score Summary (Chunk Preservation)")
         for key, val in summary.items():
-            f.write(f"- {key}: {val}")
+            f.write(f"\n- {key}: {val}")
 
