@@ -62,7 +62,7 @@ def setup():
     else:
         print("Qdrant collection already exists, skipping indexing.")
 
-@app.get("/")
+@app.get("/")   
 def read_root():
     return {"message": "Health Bot API is running. Use /query to post questions."}
 
