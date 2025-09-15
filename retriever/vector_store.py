@@ -46,7 +46,7 @@ def query_index(query_embedding, top_k=3, threshold=0.1):
         for r in search_result
         if r.score >= threshold
     ]
-    print(filtered)
+    print("Results filtered")
     return filtered  if filtered else [{"score": threshold, 
                                        "document": {"title": "NA",
                                                     "chunk_id": 0,
